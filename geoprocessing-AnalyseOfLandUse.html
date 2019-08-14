@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no"/>
+    <title>Geoprocessing - viewshed analysis - 4.12</title>
+    <style>
+        html,
+        body,
+        #viewDiv {
+            padding: 0;
+            margin: 0;
+            height: 100%;
+            width: 100%;
+        }
+
+        #paneDiv {
+            position: absolute;
+            top: 18px;
+            right: 18px;
+            padding: 12px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            width: 200px;
+        }
+    </style>
+
+    <!-- <link rel="stylesheet" href="https://js.arcgis.com/3.29/esri/themes/light/main.css"/> -->
+    <!-- <link rel="stylesheet" href="./css/esri.css"> -->
+    <!--<script src="https://js.arcgis.com/4.12/"></script>-->
+      <link rel="stylesheet" href="https://js.arcgis.com/3.29/esri/css/esri.css">
+    <script src="https://js.arcgis.com/3.29/"></script>
+    <script>
+
+        require([
+                "esri/map",
+                "esri/layers/GraphicsLayer",
+                "esri/graphic",
+                "esri/tasks/Geoprocessor",
+                "esri/tasks/FeatureSet",
+                "esri/tasks/QueryTask",
+                "esri/tasks/query",
+                "esri/SpatialReference",
+                "esri/Color",
+                "esri/symbols/SimpleFillSymbol",
+                "esri/symbols/SimpleLineSymbol",
+                "esri/layers/ArcGISDynamicMapServiceLayer",
+                "esri/config"
+            ], function (
+            Map,
+            GraphicsLayer,
+            Graphic,
+            Geoprocessor,
+            FeatureSet,
+            QueryTask,
+            Query,
+            SpatialReference,
+            Color,
+            SimpleFillSymbol,
+            SimpleLineSymbol,
+            ArcGISDynamicMapServiceLayer,
+            esriConfig
+            ) {
+
+            	// 代理配置，在没有配置代理时，没有配置代理时把下边两行注释掉
+    //         	esriConfig.defaults.io.proxyUrl = "http://localhost/DotNet/proxy.ashx"  //代理地址
+				// esriConfig.defaults.io.alwaysUseProxy = false;
+
+
+                //gp服务地址
+                let gpUrl = "http://10.110.2.219:6080/arcgis/rest/services/AnalyseOfLandUse/IllegalLandUse/GPServer/IllegalLandUse"
+                //gp服务输出参数名称
+                let resultName = "IllegalLandUse"
+                let spatial=102100
+              
+                let map = new Map("viewDiv", {
+                    basemap: "streets",
+                    center: [117, 36],
+                    zoom: 3
+                });    
+              
+                //添加grapyics图层，用于展示非法用地结果
+                let graphicsLayer = new GraphicsLayer();
+                map.addLayer(graphicsLayer);
+
+                let gp = new Geoprocessor(gpUrl);
+                gp.outSpatialReference = {
+                    // autocasts as new SpatialReference()
+                    wkid: spatial
+                };
+
+                //点击按钮事件，执行非法用地检查并显示在地图上
+                document.getElementById('erase').onclick = computeViewshed;
+
+                function computeViewshed(event) {
+                    graphicsLayer.clear();
+
+                    //两区地块服务地址
+                    // let dikuaiLayerUrl = "http://10.110.2.219:6080/arcgis/rest/services/LQHD/LQDK/MapServer/0"
+                    // let dikuaiLayerUrl = "http://10.110.2.219:6080/arcgis/rest/services/LQHD/LQDK3701172019/MapServer/0"
+                  let dikuaiLayerUrl =  "http://10.110.2.219:6080/arcgis/rest/services/test/qd/MapServer/1"
+                   // let dikuaiLayerUrl =  "http://10.110.2.219:6080/arcgis/rest/services/LQHD/LQDK84/MapServer/0"
+
+                    //基本农田服务地址
+                    // let nongtianLayerUrl = "http://10.110.2.219:6080/arcgis/rest/services/LQHD/JBNTBHTB/MapServer/0"
+                     let nongtianLayerUrl =  "http://10.110.2.219:6080/arcgis/rest/services/test/qd/MapServer/0"
+                      // let nongtianLayerUrl = "http://10.110.2.219:6080/arcgis/rest/services/LQHD/JBNTBHQ84/MapServer/0"
+
+
+                    //构建查询
+                    var DikuaiQueryTask = new QueryTask(dikuaiLayerUrl);
+                    var NongtianQueryTask = new QueryTask(nongtianLayerUrl);
+
+                    //查询条件
+                    var mQuery = new Query();
+                    mQuery.returnGeometry = true;
+                    mQuery.outFields = ["*"];
+                    mQuery.where = "1 = 1";
+                    // mQuery.where = "1 = 1";// Return all
+                    mQuery.outSpatialReference = {wkid: spatial};
+
+                    //执行所有查询
+                    Promise.all([
+                        DikuaiQueryTask.execute(mQuery),
+                        NongtianQueryTask.execute(mQuery)
+                    ]).then(([block, farm]) => {
+                        let params = {
+                            polygon: block,
+                            nongtian: farm
+                        };                       
+                       
+                       // 异步执行gp服务，对gp服务结果进行渲染；同步的执行gp.excute
+                        gp.submitJob(params).then(result => {
+                            // result只用执行信息，gp.getResultData是获取gp服务结果
+                            gp.getResultData(result['jobId'], resultName).then(result => {
+                                //result为所有非法地块信息
+                                drawResultData(result['value'])
+                            })
+                        }).catch(function (reason) {
+                            console.warn(reason)
+                        });
+                    });
+                }
+
+                /*
+                将gp服务结果在地图上展示
+                */
+                function drawResultData(result) {
+                    var resultFeatures = result.features;
+                    resultFeatures.map(function (feature) {
+
+                        // * 获取地块的所属地区和面积
+                        console.log(feature.attributes.LQDKMC);
+                        console.log(feature.attributes.Shape_Area);
+
+                        var polygonSymbol = new SimpleFillSymbol(
+                            "solid",
+                            new SimpleLineSymbol("solid", new Color([232, 104, 80]), 2),
+                            new Color([232, 104, 80, 0.25])
+                        );
+                        graphicsLayer.add(new Graphic(feature.geometry, polygonSymbol));
+                    })
+                }
+            }
+        );
+    </script>
+</head>
+
+<body>
+<div id="viewDiv"></div>
+<div id="paneDiv" class="esri-widget">
+    点击按钮获取非法用地
+    <input id="erase" type="button" value="获取非法用地"/>
+</div>
+
+</body>
+</html>
